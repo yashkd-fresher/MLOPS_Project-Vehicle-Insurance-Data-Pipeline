@@ -1,19 +1,19 @@
 import boto3
 from src.configuration.aws_connection import S3Client
 from io import StringIO
-from typing import Union,List
-import os,sys
+from typing import Union, List
+import os, sys
 from src.logger import logging
 from mypy_boto3_s3.service_resource import Bucket
 from src.exception import MyException
 from botocore.exceptions import ClientError
-from pandas import DataFrame,read_csv
+from pandas import DataFrame, read_csv
 import pickle
 
 
 class SimpleStorageService:
     """
-    A class for interacting with AWS S3 storage, providing methods for file management, 
+    A class for interacting with AWS S3 storage, providing methods for file management,
     data uploads, and data retrieval in S3 buckets.
     """
 
@@ -26,7 +26,7 @@ class SimpleStorageService:
         self.s3_resource = s3_client.s3_resource
         self.s3_client = s3_client.s3_client
 
-    def s3_key_path_available(self, bucket_name, s3_key) -> bool:
+    def s3_key_path_available(self, bucket_name: str, s3_key: str) -> bool:
         """
         Checks if a specified S3 key path (file path) is available in the specified bucket.
 
@@ -45,20 +45,24 @@ class SimpleStorageService:
             raise MyException(e, sys)
 
     @staticmethod
-    def read_object(object_name: str, decode: bool = True, make_readable: bool = False) -> Union[StringIO, str]:
+    def read_object(object_name, decode: bool = True, make_readable: bool = False) -> Union[StringIO, str]:
         """
         Reads the specified S3 object with optional decoding and formatting.
 
         Args:
-            object_name (str): The S3 object name.
+            object_name: The S3 object (or list of S3 objects).
             decode (bool): Whether to decode the object content as a string.
             make_readable (bool): Whether to convert content to StringIO for DataFrame usage.
 
         Returns:
             Union[StringIO, str]: The content of the object, as a StringIO or decoded string.
         """
-        # logging.info("Entered the read_object method of SimpleStorageService class")
+        logging.info("Entered the read_object method of SimpleStorageService class")
         try:
+            # ✅ Fix — if a list is passed, always take the first element
+            if isinstance(object_name, list):
+                object_name = object_name[0]
+
             # Read and decode the object content if decode=True
             func = (
                 lambda: object_name.get()["Body"].read().decode()
@@ -66,7 +70,7 @@ class SimpleStorageService:
             )
             # Convert to StringIO if make_readable=True
             conv_func = lambda: StringIO(func()) if make_readable else func()
-            # logging.info("Exited the read_object method of SimpleStorageService class")
+            logging.info("Exited the read_object method of SimpleStorageService class")
             return conv_func()
         except Exception as e:
             raise MyException(e, sys) from e
@@ -89,25 +93,30 @@ class SimpleStorageService:
         except Exception as e:
             raise MyException(e, sys) from e
 
-    def get_file_object(self, filename: str, bucket_name: str) -> Union[List[object], object]:
+    def get_file_object(self, filename: str, bucket_name: str) -> object:
         """
-        Retrieves the file object(s) from the specified bucket based on the filename.
+        Retrieves the file object from the specified bucket based on the filename.
 
         Args:
             filename (str): The name of the file to retrieve.
             bucket_name (str): The name of the S3 bucket.
 
         Returns:
-            Union[List[object], object]: The S3 file object or list of file objects.
+            object: The S3 file object.
         """
         logging.info("Entered the get_file_object method of SimpleStorageService class")
         try:
             bucket = self.get_bucket(bucket_name)
             file_objects = [file_object for file_object in bucket.objects.filter(Prefix=filename)]
-            func = lambda x: x[0] if len(x) == 1 else x
-            file_objs = func(file_objects)
+
+            # ✅ Fix — raise clear error if nothing found
+            if len(file_objects) == 0:
+                raise Exception(f"No file found in bucket '{bucket_name}' with prefix: '{filename}'")
+
+            # ✅ Fix — always return single object, never a list
+            file_obj = file_objects[0]
             logging.info("Exited the get_file_object method of SimpleStorageService class")
-            return file_objs
+            return file_obj
         except Exception as e:
             raise MyException(e, sys) from e
 
@@ -123,6 +132,7 @@ class SimpleStorageService:
         Returns:
             object: The deserialized model object.
         """
+        logging.info("Entered the load_model method of SimpleStorageService class")
         try:
             model_file = model_dir + "/" + model_name if model_dir else model_name
             file_object = self.get_file_object(model_file, bucket_name)
@@ -150,9 +160,9 @@ class SimpleStorageService:
             if e.response["Error"]["Code"] == "404":
                 folder_obj = folder_name + "/"
                 self.s3_client.put_object(Bucket=bucket_name, Key=folder_obj)
-            logging.info("Exited the create_folder method of SimpleStorageService class")
+        logging.info("Exited the create_folder method of SimpleStorageService class")
 
-    def upload_file(self, from_filename: str, to_filename: str, bucket_name: str, remove: bool = True):
+    def upload_file(self, from_filename: str, to_filename: str, bucket_name: str, remove: bool = True) -> None:
         """
         Uploads a local file to the specified S3 bucket with an optional file deletion.
 
